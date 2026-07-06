@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>출조노트</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pretendard/dist/web/static/pretendard.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="hero">
+      <p class="hero-kicker">Fishing Schedule Notebook</p>
+      <h1>출조노트</h1>
+      <p class="hero-description">
+        다음 출조 일정, 준비물, 메모, 장소 정보를 한 화면에서 관리하는 모바일 웹입니다.
+      </p>
+    </header>
+
+    <main class="app-main">
+      <section id="selected-trip-card" class="card feature-card" aria-live="polite"></section>
+      <section id="prep-summary-card" class="card" aria-live="polite"></section>
+      <section id="weather-card" class="card" aria-live="polite"></section>
+      <section id="condition-card" class="card" aria-live="polite"></section>
+      <section id="tide-card" class="card" aria-live="polite"></section>
+      <section id="checklist-card" class="card" aria-live="polite"></section>
+      <section id="place-card" class="card" aria-live="polite"></section>
+      <section id="memo-card" class="card" aria-live="polite"></section>
+      <section id="trip-list-card" class="card" aria-live="polite"></section>
+
+      <section id="trip-form-card" class="card">
+        <div class="section-title-row">
+          <div>
+            <p class="section-kicker">일정 등록</p>
+            <h2>새 일정 추가</h2>
+          </div>
+        </div>
+
+        <form id="trip-form" class="trip-form">
+          <label class="field">
+            <span>출조명</span>
+            <input type="text" name="title" placeholder="예: 격포 참돔 타이라바" required>
+          </label>
+
+          <div class="field-grid two-columns">
+            <label class="field">
+              <span>날짜</span>
+              <input type="date" name="date" id="trip-date-input" required>
+            </label>
+            <label class="field">
+              <span>시간</span>
+              <input type="time" name="time" id="trip-time-input" required>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>장소명</span>
+            <input type="text" name="locationName" placeholder="예: 구매항" required>
+          </label>
+
+          <div class="field-grid two-columns">
+            <label class="field">
+              <span>낚시유형</span>
+              <select name="fishingType" required>
+                <option value="선상">선상</option>
+                <option value="방파제">방파제</option>
+                <option value="원투">원투</option>
+                <option value="갑오징어">갑오징어</option>
+                <option value="기타">기타</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>대상어</span>
+              <input type="text" name="targetFish" placeholder="예: 광어" required>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>출항지 또는 집결지</span>
+            <input type="text" name="meetupPlace" placeholder="예: 구매항">
+          </label>
+
+          <div class="field-grid two-columns">
+            <label class="field">
+              <span>집결 시간</span>
+              <input type="time" name="meetupTime" id="meetup-time-input">
+            </label>
+            <label class="field">
+              <span>비용</span>
+              <input type="number" name="cost" min="0" step="1000" placeholder="80000">
+            </label>
+          </div>
+
+          <label class="field">
+            <span>메모</span>
+            <textarea
+              name="memo"
+              rows="4"
+              placeholder="예: 신분증 지참, 멀미약 미리 복용"
+            ></textarea>
+          </label>
+
+          <button type="submit" class="primary-button large-button">일정 등록하기</button>
+        </form>
+      </section>
+    </main>
+
+    <div class="floating-bar">
+      <button id="scroll-to-form-btn" class="primary-button large-button" type="button">
+        새 일정 등록
+      </button>
+    </div>
+  </div>
+
+  <script>
+    window.CHULJO_NOTE_CONFIG = {
+      naverMaps: {
+        clientId: "xv0ss12jel",
+        proxyBaseUrl: "",
+        endpoints: {
+          staticMap: "https://maps.apigw.ntruss.com/map-static/v2",
+          directions5: "https://maps.apigw.ntruss.com/map-direction/v1",
+          directions15: "https://maps.apigw.ntruss.com/map-direction-15/v1",
+          geocoding: "https://maps.apigw.ntruss.com/map-geocode/v2",
+          reverseGeocoding: "https://maps.apigw.ntruss.com/map-reversegeocode/v2"
+        }
+      }
+    };
+  </script>
+  <script src="app.js" defer></script>
+</body>
+</html>
