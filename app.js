@@ -23,6 +23,9 @@ const state = {
   trips: [],
   selectedTripId: null,
   resolvingTripIds: new Set(),
+  loadingWeatherTripIds: new Set(),
+  weatherByTripId: {},
+  weatherErrors: {},
   locationErrors: {}
 };
 
@@ -121,6 +124,11 @@ function handleDocumentClick(event) {
 
   if (action === "refresh-location") {
     void syncTripLocation(tripId, true);
+    return;
+  }
+
+  if (action === "refresh-weather") {
+    void syncTripWeather(tripId, true);
   }
 }
 
@@ -317,6 +325,7 @@ function renderApp() {
 
   if (selectedTrip) {
     void syncSelectedTripLocation();
+    void syncSelectedTripWeather();
   }
 }
 
@@ -435,12 +444,23 @@ function renderWeatherCard(trip) {
   if (!trip) {
     dom.weatherCard.innerHTML = createEmptyCardMarkup(
       "날씨",
-      "일정을 선택하면 더미 날씨 데이터를 볼 수 있습니다."
+      "일정을 선택하면 기상청 예보와 일출·일몰 정보를 함께 볼 수 있습니다."
     );
     return;
   }
 
   const weather = getWeatherData(trip);
+  const weatherUi = getWeatherCardUi(trip, weather);
+  const minMaxText = hasTemperatureRange(weather)
+    ? `${weather.minTemperature}°C / ${weather.maxTemperature}°C`
+    : "예보 범위 대기";
+  const sunriseSunsetText = weather.sunrise && weather.sunset
+    ? `${weather.sunrise} / ${weather.sunset}`
+    : "조회 대기";
+  const humidityText = Number.isFinite(weather.humidity) ? `${weather.humidity}%` : "확인 중";
+  const windText = Number.isFinite(weather.windSpeed)
+    ? `${weather.windSpeed}m/s · ${escapeHtml(weather.windDirection || "변동")}`
+    : "중기예보 기준";
 
   dom.weatherCard.innerHTML = `
     <div class="section-title-row">
@@ -448,13 +468,17 @@ function renderWeatherCard(trip) {
         <p class="section-kicker">날씨</p>
         <h2>${escapeHtml(trip.locationName)} 기준</h2>
       </div>
-      <span class="badge badge-muted">더미 데이터</span>
+      <span class="badge ${weatherUi.badgeClass}">${weatherUi.badgeText}</span>
     </div>
 
     <div class="weather-grid">
       <div class="weather-item">
         <span>기온</span>
         <strong>${weather.temperature}°C</strong>
+      </div>
+      <div class="weather-item">
+        <span>최저 / 최고</span>
+        <strong>${minMaxText}</strong>
       </div>
       <div class="weather-item">
         <span>날씨 상태</span>
@@ -466,11 +490,33 @@ function renderWeatherCard(trip) {
       </div>
       <div class="weather-item">
         <span>풍속 / 풍향</span>
-        <strong>${weather.windSpeed}m/s · ${escapeHtml(weather.windDirection)}</strong>
+        <strong>${windText}</strong>
+      </div>
+      <div class="weather-item">
+        <span>습도</span>
+        <strong>${humidityText}</strong>
+      </div>
+      <div class="weather-item">
+        <span>일출 / 일몰</span>
+        <strong>${sunriseSunsetText}</strong>
       </div>
     </div>
 
-    <p class="helper-text">나중에 <code>getWeatherData(trip)</code>에 실제 기상 API를 연결할 수 있도록 분리해두었습니다.</p>
+    <div class="card-action-row">
+      <button
+        type="button"
+        class="secondary-button"
+        data-action="refresh-weather"
+        data-trip-id="${escapeHtmlAttribute(trip.id)}"
+      >
+        ${weatherUi.refreshLabel}
+      </button>
+    </div>
+
+    <p class="helper-text">${escapeHtml(weatherUi.description)}</p>
+    ${weather.providerNotes.length ? `
+      <p class="helper-text">${escapeHtml(weather.providerNotes.join(" "))}</p>
+    ` : ""}
   `;
 }
 
@@ -485,6 +531,9 @@ function renderConditionCard(trip) {
 
   const weather = getWeatherData(trip);
   const condition = calculateFishingCondition(weather);
+  const conditionHelper = weather.usesEstimatedWind
+    ? "중기예보에는 풍속 정보가 없어 보조 추정값을 함께 사용했습니다."
+    : `풍속 ${weather.windSpeed}m/s, 강수확률 ${weather.precipitation}% 기준으로 계산했습니다.`;
 
   dom.conditionCard.innerHTML = `
     <div class="section-title-row">
@@ -503,7 +552,7 @@ function renderConditionCard(trip) {
       <div class="condition-copy">
         <h2>${condition.headline}</h2>
         <p>${condition.message}</p>
-        <p class="helper-text">풍속 ${weather.windSpeed}m/s, 강수확률 ${weather.precipitation}% 기준으로 단순 계산했습니다.</p>
+        <p class="helper-text">${conditionHelper}</p>
       </div>
     </div>
   `;
@@ -854,6 +903,8 @@ function addTrip(event) {
   state.trips.push(newTrip);
   state.selectedTripId = newTrip.id;
   delete state.locationErrors[newTrip.id];
+  delete state.weatherErrors[newTrip.id];
+  delete state.weatherByTripId[newTrip.id];
 
   saveTrips();
   saveSelectedTrip();
@@ -878,6 +929,9 @@ function deleteTrip(tripId) {
 
   state.trips = state.trips.filter((item) => item.id !== tripId);
   delete state.locationErrors[tripId];
+  delete state.weatherErrors[tripId];
+  delete state.weatherByTripId[tripId];
+  state.loadingWeatherTripIds.delete(tripId);
 
   if (state.selectedTripId === tripId) {
     state.selectedTripId = getNearestTrip(state.trips)?.id || null;
@@ -1019,22 +1073,249 @@ function getTripDateValue(trip) {
 }
 
 function getWeatherData(trip) {
+  const cachedWeather = getWeatherCacheEntry(trip)?.data;
+  return cachedWeather || createFallbackWeatherData(trip);
+}
+
+function getWeatherConfig() {
+  const rawConfig = window.CHULJO_NOTE_CONFIG?.weather || {};
+
+  return {
+    proxyBaseUrl: sanitizeBaseUrl(rawConfig.proxyBaseUrl || "/api/weather")
+  };
+}
+
+function hasWeatherProxy() {
+  return Boolean(getWeatherConfig().proxyBaseUrl);
+}
+
+function getWeatherCacheKey(trip) {
+  return [
+    trip.date,
+    trip.time,
+    trip.locationName,
+    trip.meetupPlace,
+    trip.locationMeta?.lat ?? "",
+    trip.locationMeta?.lng ?? ""
+  ].join("|");
+}
+
+function getWeatherCacheEntry(trip) {
+  if (!trip) {
+    return null;
+  }
+
+  const entry = state.weatherByTripId[trip.id];
+
+  if (!entry) {
+    return null;
+  }
+
+  return entry.cacheKey === getWeatherCacheKey(trip) ? entry : null;
+}
+
+function hasTemperatureRange(weather) {
+  return Number.isFinite(weather.minTemperature) && Number.isFinite(weather.maxTemperature);
+}
+
+function getWeatherCardUi(trip, weather) {
+  if (state.loadingWeatherTripIds.has(trip.id) && !weather.hasLiveData) {
+    return {
+      badgeClass: "badge",
+      badgeText: "실예보 조회 중",
+      refreshLabel: "날씨 불러오는 중",
+      description: "기상청 단기예보·중기예보와 출몰시각 정보를 불러오는 중입니다."
+    };
+  }
+
+  if (state.loadingWeatherTripIds.has(trip.id)) {
+    return {
+      badgeClass: "badge",
+      badgeText: weather.sourceLabel,
+      refreshLabel: "날씨 다시 확인 중",
+      description: "이전 예보를 유지한 채 최신 예보를 다시 확인하고 있습니다."
+    };
+  }
+
+  if (state.weatherErrors[trip.id]) {
+    return {
+      badgeClass: weather.hasLiveData ? "badge-warning" : "badge-muted",
+      badgeText: weather.hasLiveData ? weather.sourceLabel : "예시 데이터",
+      refreshLabel: "날씨 다시 시도",
+      description: state.weatherErrors[trip.id]
+    };
+  }
+
+  return {
+    badgeClass: weather.hasLiveData ? "badge-success" : "badge-muted",
+    badgeText: weather.sourceLabel,
+    refreshLabel: "날씨 새로고침",
+    description: weather.description
+  };
+}
+
+async function syncSelectedTripWeather() {
+  const selectedTrip = getSelectedTrip();
+
+  if (!selectedTrip) {
+    return;
+  }
+
+  await syncTripWeather(selectedTrip.id, false);
+}
+
+async function syncTripWeather(tripId, forceRefresh) {
+  const trip = state.trips.find((item) => item.id === tripId);
+
+  if (!trip || !trip.locationName.trim() || !trip.date) {
+    return;
+  }
+
+  if (!hasWeatherProxy()) {
+    return;
+  }
+
+  if (state.loadingWeatherTripIds.has(tripId)) {
+    return;
+  }
+
+  const cacheEntry = getWeatherCacheEntry(trip);
+  const cacheAge = cacheEntry ? Date.now() - cacheEntry.fetchedAt : Number.POSITIVE_INFINITY;
+  const shouldReuseCache = cacheEntry && !forceRefresh && cacheAge < 30 * 60 * 1000;
+
+  if (shouldReuseCache) {
+    return;
+  }
+
+  state.loadingWeatherTripIds.add(tripId);
+
+  if (trip.id === state.selectedTripId) {
+    renderWeatherCard(trip);
+    renderConditionCard(trip);
+  }
+
+  try {
+    const weather = await fetchWeatherApiData(trip);
+
+    state.weatherByTripId[tripId] = {
+      cacheKey: getWeatherCacheKey(trip),
+      data: weather,
+      fetchedAt: Date.now()
+    };
+
+    delete state.weatherErrors[tripId];
+  } catch (error) {
+    state.weatherErrors[tripId] = getFriendlyWeatherError(error);
+    state.weatherByTripId[tripId] = {
+      cacheKey: getWeatherCacheKey(trip),
+      data: createFallbackWeatherData(trip),
+      fetchedAt: Date.now()
+    };
+  } finally {
+    state.loadingWeatherTripIds.delete(tripId);
+    renderApp();
+  }
+}
+
+async function fetchWeatherApiData(trip) {
+  const response = await fetch(buildWeatherProxyUrl(trip), {
+    method: "GET",
+    headers: {
+      Accept: "application/json"
+    }
+  });
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok || !payload.ok) {
+    throw new Error(payload.message || `날씨 API 요청 실패 (${response.status})`);
+  }
+
+  return normalizeWeatherApiData(payload.weather);
+}
+
+function buildWeatherProxyUrl(trip) {
+  const baseUrl = getWeatherConfig().proxyBaseUrl;
+  const searchParams = new URLSearchParams({
+    date: trip.date,
+    time: trip.time || "05:00",
+    locationName: trip.locationName
+  });
+
+  if (Number.isFinite(trip.locationMeta?.lat) && Number.isFinite(trip.locationMeta?.lng)) {
+    searchParams.set("lat", String(trip.locationMeta.lat));
+    searchParams.set("lng", String(trip.locationMeta.lng));
+  }
+
+  return `${baseUrl}?${searchParams.toString()}`;
+}
+
+function normalizeWeatherApiData(weather) {
+  const windSpeed = toNullableNumber(weather.windSpeed);
+  const minTemperature = toNullableNumber(weather.minTemperature);
+  const maxTemperature = toNullableNumber(weather.maxTemperature);
+  const temperature = toNullableNumber(weather.temperature);
+  const precipitation = toNullableNumber(weather.precipitationProbability ?? weather.precipitation);
+  const humidity = toNullableNumber(weather.humidity);
+  const fallbackTemperature = temperature ?? averageTemperature(minTemperature, maxTemperature) ?? 0;
+
+  return {
+    temperature: Number(fallbackTemperature.toFixed(1)),
+    minTemperature,
+    maxTemperature,
+    condition: String(weather.condition || "예보 확인 중"),
+    precipitation: Number.isFinite(precipitation) ? precipitation : 0,
+    windSpeed,
+    windDirection: String(weather.windDirection || "변동"),
+    humidity,
+    sunrise: normalizeClockText(weather.sunrise),
+    sunset: normalizeClockText(weather.sunset),
+    source: String(weather.source || "api"),
+    sourceLabel: String(weather.sourceLabel || "공공 예보"),
+    hasLiveData: true,
+    usesEstimatedWind: Boolean(weather.usesEstimatedWind),
+    description: String(
+      weather.description
+      || weather.summary
+      || "기상청 단기예보·중기예보와 한국천문연구원 출몰시각 정보를 기준으로 구성했습니다."
+    ),
+    providerNotes: Array.isArray(weather.notes)
+      ? weather.notes.map((item) => String(item)).filter(Boolean)
+      : []
+  };
+}
+
+function createFallbackWeatherData(trip) {
   const seed = createSeed(`${trip.id}-${trip.date}-${trip.locationName}`);
   const conditions = ["맑음", "구름 많음", "흐림", "약한 비 가능"];
   const directions = ["북", "북동", "동", "남동", "남", "남서", "서", "북서"];
+  const temperature = 18 + (seed % 12);
 
   return {
-    temperature: 18 + (seed % 12),
+    temperature,
+    minTemperature: temperature - 2,
+    maxTemperature: temperature + 3,
     condition: conditions[seed % conditions.length],
     precipitation: [10, 20, 30, 40, 50, 60, 70][seed % 7],
     windSpeed: Number((2 + ((seed % 65) / 10)).toFixed(1)),
-    windDirection: directions[seed % directions.length]
+    windDirection: directions[seed % directions.length],
+    humidity: 55 + (seed % 35),
+    sunrise: "",
+    sunset: "",
+    source: "fallback",
+    sourceLabel: "예시 데이터",
+    hasLiveData: false,
+    usesEstimatedWind: false,
+    description: "실제 예보를 아직 불러오지 못해 예시값으로 표시 중입니다. Vercel 환경변수와 예보 범위를 확인하면 실제 데이터로 바뀝니다.",
+    providerNotes: []
   };
 }
 
 function calculateFishingCondition(weather) {
-  const windPenalty = Math.max(0, weather.windSpeed - 2) * 8;
-  const rainPenalty = weather.precipitation * 0.35;
+  const effectiveWindSpeed = Number.isFinite(weather.windSpeed) ? weather.windSpeed : 4.5;
+  const effectivePrecipitation = Number.isFinite(weather.precipitation) ? weather.precipitation : 30;
+  const windPenalty = Math.max(0, effectiveWindSpeed - 2) * 8;
+  const rainPenalty = effectivePrecipitation * 0.35;
   const score = clamp(Math.round(95 - windPenalty - rainPenalty), 0, 100);
 
   let label = "좋음";
@@ -1043,24 +1324,30 @@ function calculateFishingCondition(weather) {
   let statusText = "양호";
   let badgeClass = "badge-success";
 
-  if (weather.precipitation >= 60) {
+  if (effectivePrecipitation >= 60) {
     label = "주의";
     headline = "비 예보가 있어 대비가 필요합니다.";
     message = "비 예보가 있어 우비와 방수팩을 챙기세요.";
     statusText = "우천 대비";
     badgeClass = "badge-warning";
-  } else if (weather.windSpeed >= 7) {
+  } else if (effectiveWindSpeed >= 7) {
     label = "주의";
     headline = "강한 바람 구간을 확인하세요.";
     message = "바람이 강할 수 있어 출항 여부를 확인하세요.";
     statusText = "강풍 주의";
     badgeClass = "badge-danger";
-  } else if (weather.windSpeed > 4) {
+  } else if (effectiveWindSpeed > 4) {
     label = "보통";
     headline = "약간의 바람을 감안한 준비가 좋습니다.";
     message = "바람을 고려해 포인트 이동 시간과 방풍 장비를 준비하세요.";
     statusText = "보통";
     badgeClass = "badge";
+  }
+
+  if (weather.usesEstimatedWind) {
+    message = `${message} 중기예보에는 풍속 정보가 없어 보조 추정값을 함께 반영했습니다.`;
+  } else if (!weather.hasLiveData) {
+    message = `${message} 실제 예보가 아직 없어 예시값 기준으로 보여주고 있습니다.`;
   }
 
   return {
@@ -1385,9 +1672,54 @@ function getFriendlyLocationError(error) {
   return "위치 정보를 가져오지 못했습니다. 프록시 설정과 장소명을 확인해보세요.";
 }
 
+function getFriendlyWeatherError(error) {
+  const message = String(error?.message || "");
+
+  if (message.includes("Failed to fetch")) {
+    return "날씨 예보 서버에 연결하지 못했습니다. 배포 주소 또는 네트워크 상태를 확인하세요.";
+  }
+
+  if (message.includes("환경변수")) {
+    return message;
+  }
+
+  if (message.includes("예보 범위")) {
+    return message;
+  }
+
+  if (message.includes("지역 매핑")) {
+    return message;
+  }
+
+  if (message.includes("날씨 API 요청 실패")) {
+    return "날씨 프록시 응답이 정상이 아닙니다. 서버 함수 로그를 확인해보세요.";
+  }
+
+  return message || "날씨 정보를 가져오지 못했습니다. 잠시 후 다시 시도해보세요.";
+}
+
 function toNullableNumber(value) {
   const numericValue = Number(value);
   return Number.isFinite(numericValue) ? numericValue : null;
+}
+
+function averageTemperature(minTemperature, maxTemperature) {
+  if (!Number.isFinite(minTemperature) || !Number.isFinite(maxTemperature)) {
+    return null;
+  }
+
+  return (minTemperature + maxTemperature) / 2;
+}
+
+function normalizeClockText(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+
+  if (digits.length < 3) {
+    return "";
+  }
+
+  const padded = digits.padStart(4, "0");
+  return `${padded.slice(0, 2)}:${padded.slice(2, 4)}`;
 }
 
 function openNaverMap(placeName) {

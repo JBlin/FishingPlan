@@ -587,6 +587,16 @@ button {
   margin-top: 14px;
 }
 
+.card-action-row {
+  margin-top: 14px;
+}
+
+.card-action-row .secondary-button,
+.card-action-row .ghost-button,
+.card-action-row .primary-button {
+  width: 100%;
+}
+
 .button-row {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
