@@ -22,6 +22,7 @@ const DEFAULT_CHECKLISTS = {
 const state = {
   trips: [],
   selectedTripId: null,
+  currentView: "list",
   isTripFormOpen: false,
   resolvingTripIds: new Set(),
   loadingWeatherTripIds: new Set(),
@@ -58,19 +59,23 @@ function init() {
     saveSelectedTrip();
   }
 
+  syncRouteFromHash();
   renderApp();
 }
 
 function cacheDom() {
+  dom.heroDescription = document.querySelector(".hero-description");
   dom.selectedTripCard = document.getElementById("selected-trip-card");
   dom.briefingCard = document.getElementById("briefing-card");
   dom.prepCard = document.getElementById("prep-card");
   dom.placeCard = document.getElementById("place-card");
+  dom.detailActionsCard = document.getElementById("detail-actions-card");
   dom.tripListCard = document.getElementById("trip-list-card");
   dom.tripForm = document.getElementById("trip-form");
   dom.tripDateInput = document.getElementById("trip-date-input");
   dom.tripTimeInput = document.getElementById("trip-time-input");
   dom.meetupTimeInput = document.getElementById("meetup-time-input");
+  dom.backToListButton = document.getElementById("back-to-list-btn");
   dom.toggleTripFormButton = document.getElementById("toggle-trip-form-btn");
   dom.tripFormCard = document.getElementById("trip-form-card");
 }
@@ -78,6 +83,8 @@ function cacheDom() {
 function bindStaticEvents() {
   dom.tripForm.addEventListener("submit", addTrip);
   dom.toggleTripFormButton.addEventListener("click", toggleTripForm);
+  dom.backToListButton.addEventListener("click", navigateToList);
+  window.addEventListener("hashchange", handleHashChange);
 
   document.addEventListener("click", handleDocumentClick);
   document.addEventListener("change", handleDocumentChange);
@@ -153,6 +160,60 @@ function handleDocumentInput(event) {
   }
 
   updateTripLog(event.target.value);
+}
+
+function handleHashChange() {
+  syncRouteFromHash();
+  renderApp();
+}
+
+function syncRouteFromHash() {
+  const hash = String(window.location.hash || "");
+  const tripMatch = /^#\/trip\/(.+)$/.exec(hash);
+
+  if (tripMatch) {
+    const tripId = decodeURIComponent(tripMatch[1]);
+    const exists = state.trips.some((trip) => trip.id === tripId);
+
+    if (exists) {
+      state.selectedTripId = tripId;
+      state.currentView = "detail";
+      saveSelectedTrip();
+      return;
+    }
+  }
+
+  state.currentView = "list";
+}
+
+function navigateToList() {
+  if (window.location.hash === "#/list") {
+    state.currentView = "list";
+    renderApp();
+    return;
+  }
+
+  window.location.hash = "/list";
+}
+
+function navigateToTripDetail(tripId) {
+  const exists = state.trips.some((trip) => trip.id === tripId);
+
+  if (!exists) {
+    return;
+  }
+
+  state.selectedTripId = tripId;
+  saveSelectedTrip();
+  const nextHash = `#/trip/${encodeURIComponent(tripId)}`;
+
+  if (window.location.hash === nextHash) {
+    state.currentView = "detail";
+    renderApp();
+    return;
+  }
+
+  window.location.hash = `/trip/${encodeURIComponent(tripId)}`;
 }
 
 function toggleTripForm() {
@@ -336,15 +397,28 @@ function generateId() {
 
 function renderApp() {
   const selectedTrip = getSelectedTrip();
+  const isDetailView = state.currentView === "detail" && Boolean(selectedTrip);
 
-  renderSelectedTrip(selectedTrip);
-  renderBriefingCard(selectedTrip);
-  renderPreparationCard(selectedTrip);
-  renderPlaceCard(selectedTrip);
+  syncHeaderUi(isDetailView, selectedTrip);
+  setSectionVisibility(dom.selectedTripCard, isDetailView);
+  setSectionVisibility(dom.briefingCard, isDetailView);
+  setSectionVisibility(dom.prepCard, isDetailView);
+  setSectionVisibility(dom.placeCard, isDetailView);
+  setSectionVisibility(dom.detailActionsCard, isDetailView);
+  setSectionVisibility(dom.tripListCard, !isDetailView);
+
+  if (isDetailView) {
+    renderSelectedTrip(selectedTrip);
+    renderBriefingCard(selectedTrip);
+    renderPreparationCard(selectedTrip);
+    renderPlaceCard(selectedTrip);
+    renderDetailActionsCard(selectedTrip);
+  }
+
   renderTripList();
   syncTripFormUi();
 
-  if (selectedTrip) {
+  if (selectedTrip && isDetailView) {
     void syncSelectedTripLocation();
     void syncSelectedTripWeather();
   }
@@ -932,8 +1006,9 @@ function addTrip(event) {
   event.target.reset();
   setFormDefaults();
   setTripFormOpen(false, false);
+  navigateToList();
   renderApp();
-  dom.selectedTripCard.scrollIntoView({ behavior: "smooth", block: "start" });
+  dom.tripListCard.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function deleteTrip(tripId) {
@@ -961,6 +1036,7 @@ function deleteTrip(tripId) {
 
   saveTrips();
   saveSelectedTrip();
+  navigateToList();
   renderApp();
 }
 
@@ -973,10 +1049,10 @@ function selectTrip(tripId, shouldScroll) {
 
   state.selectedTripId = tripId;
   saveSelectedTrip();
-  renderApp();
+  navigateToTripDetail(tripId);
 
   if (shouldScroll) {
-    dom.selectedTripCard.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 }
 
@@ -1843,6 +1919,113 @@ function createEmptyCardMarkup(title, description) {
       <h2>${escapeHtml(title)}</h2>
       <p>${escapeHtml(description)}</p>
     </div>
+  `;
+}
+
+function setSectionVisibility(element, visible) {
+  if (!element) {
+    return;
+  }
+
+  element.hidden = !visible;
+}
+
+function syncHeaderUi(isDetailView, selectedTrip) {
+  if (dom.backToListButton) {
+    dom.backToListButton.hidden = !isDetailView;
+  }
+
+  if (!dom.heroDescription) {
+    return;
+  }
+
+  if (isDetailView && selectedTrip) {
+    dom.heroDescription.textContent = `${selectedTrip.title} 출조의 상세 정보, 준비 상태, 장소 안내를 확인하는 화면입니다.`;
+    return;
+  }
+
+  dom.heroDescription.textContent = "일정 카드를 간단히 보고, 필요한 일정만 눌러 상세 화면에서 확인하는 모바일 출조 일정 노트입니다.";
+}
+
+function renderDetailActionsCard(trip) {
+  if (!trip) {
+    dom.detailActionsCard.innerHTML = "";
+    return;
+  }
+
+  dom.detailActionsCard.innerHTML = `
+    <div class="section-title-row">
+      <div>
+        <p class="section-kicker">일정 관리</p>
+        <h2>${escapeHtml(trip.title)}</h2>
+      </div>
+    </div>
+    <p class="helper-text">이 일정이 더 이상 필요 없으면 아래에서 삭제할 수 있습니다.</p>
+    <div class="detail-actions-footer">
+      <button
+        type="button"
+        class="danger-button large-button"
+        data-action="delete-trip"
+        data-trip-id="${escapeHtmlAttribute(trip.id)}"
+      >
+        일정 삭제
+      </button>
+    </div>
+  `;
+}
+
+function renderTripList() {
+  const sortedTrips = getSortedTrips(state.trips);
+
+  dom.tripListCard.innerHTML = `
+    <div class="section-title-row list-title">
+      <div>
+        <p class="section-kicker">출조 일정</p>
+        <h2>${sortedTrips.length}개의 일정</h2>
+        <p>카드를 누르면 상세 화면으로 이동합니다.</p>
+      </div>
+    </div>
+
+    ${sortedTrips.length ? `
+      <div class="list-stack">
+        ${sortedTrips.map((trip) => {
+          const dday = calculateDday(trip.date);
+          const isNearest = getNearestTrip(state.trips)?.id === trip.id;
+
+          return `
+            <article class="trip-list-item trip-list-item-summary">
+              <button
+                type="button"
+                class="trip-select-button"
+                data-action="select-trip"
+                data-trip-id="${escapeHtmlAttribute(trip.id)}"
+              >
+                <div class="trip-card-top">
+                  <div>
+                    <span class="trip-card-title">${escapeHtml(trip.title)}</span>
+                    <div class="trip-card-meta">
+                      <span>${escapeHtml(formatTripDateTime(trip.date, trip.time))}</span>
+                      <strong>${escapeHtml(trip.locationName)}</strong>
+                    </div>
+                  </div>
+                  <span class="badge ${dday.badgeClass}">${dday.label}</span>
+                </div>
+                <div class="trip-card-chips">
+                  <span class="chip">${escapeHtml(trip.targetFish)}</span>
+                  <span class="chip">${escapeHtml(trip.fishingType)}</span>
+                  ${isNearest ? '<span class="badge badge-success">다음 출조</span>' : ""}
+                </div>
+              </button>
+            </article>
+          `;
+        }).join("")}
+      </div>
+    ` : `
+      <div class="empty-card">
+        <h2>등록된 일정이 없습니다</h2>
+        <p>헤더의 + 버튼으로 첫 출조 일정을 추가해보세요.</p>
+      </div>
+    `}
   `;
 }
 

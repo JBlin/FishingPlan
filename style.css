@@ -758,6 +758,12 @@ button {
   gap: 16px;
 }
 
+.hero-leading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
 .icon-button {
   display: inline-flex;
   align-items: center;
@@ -769,6 +775,13 @@ button {
   background: var(--primary);
   color: #ffffff;
   box-shadow: 0 12px 20px rgba(21, 101, 216, 0.18);
+}
+
+.icon-button-secondary {
+  background: var(--surface);
+  color: var(--primary-strong);
+  border: 1px solid var(--line);
+  box-shadow: none;
 }
 
 .icon-button span {
@@ -846,8 +859,13 @@ button {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.detail-actions-footer {
+  margin-top: 14px;
+}
+
 @media (max-width: 380px) {
   .hero-top,
+  .hero-leading,
   .panel-title-row {
     align-items: stretch;
     flex-direction: column;

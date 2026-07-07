@@ -12,9 +12,21 @@
   <div class="app-shell">
     <header class="hero">
       <div class="hero-top">
-        <div>
+        <div class="hero-leading">
+          <button
+            id="back-to-list-btn"
+            class="icon-button icon-button-secondary"
+            type="button"
+            aria-label="목록으로 돌아가기"
+            title="목록으로 돌아가기"
+            hidden
+          >
+            <span aria-hidden="true">←</span>
+          </button>
+          <div>
           <p class="hero-kicker">Fishing Schedule Notebook</p>
           <h1>출조노트</h1>
+          </div>
         </div>
         <button
           id="toggle-trip-form-btn"
@@ -38,6 +50,7 @@
       <section id="briefing-card" class="card" aria-live="polite"></section>
       <section id="prep-card" class="card" aria-live="polite"></section>
       <section id="place-card" class="card" aria-live="polite"></section>
+      <section id="detail-actions-card" class="card" aria-live="polite"></section>
       <section id="trip-list-card" class="card" aria-live="polite"></section>
 
       <section id="trip-form-card" class="card" hidden>
