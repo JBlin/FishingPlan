@@ -22,6 +22,7 @@ const DEFAULT_CHECKLISTS = {
 const state = {
   trips: [],
   selectedTripId: null,
+  isTripFormOpen: false,
   resolvingTripIds: new Set(),
   loadingWeatherTripIds: new Set(),
   weatherByTripId: {},
@@ -62,25 +63,21 @@ function init() {
 
 function cacheDom() {
   dom.selectedTripCard = document.getElementById("selected-trip-card");
-  dom.prepSummaryCard = document.getElementById("prep-summary-card");
-  dom.weatherCard = document.getElementById("weather-card");
-  dom.conditionCard = document.getElementById("condition-card");
-  dom.tideCard = document.getElementById("tide-card");
-  dom.checklistCard = document.getElementById("checklist-card");
+  dom.briefingCard = document.getElementById("briefing-card");
+  dom.prepCard = document.getElementById("prep-card");
   dom.placeCard = document.getElementById("place-card");
-  dom.memoCard = document.getElementById("memo-card");
   dom.tripListCard = document.getElementById("trip-list-card");
   dom.tripForm = document.getElementById("trip-form");
   dom.tripDateInput = document.getElementById("trip-date-input");
   dom.tripTimeInput = document.getElementById("trip-time-input");
   dom.meetupTimeInput = document.getElementById("meetup-time-input");
-  dom.scrollToFormButton = document.getElementById("scroll-to-form-btn");
+  dom.toggleTripFormButton = document.getElementById("toggle-trip-form-btn");
   dom.tripFormCard = document.getElementById("trip-form-card");
 }
 
 function bindStaticEvents() {
   dom.tripForm.addEventListener("submit", addTrip);
-  dom.scrollToFormButton.addEventListener("click", scrollToForm);
+  dom.toggleTripFormButton.addEventListener("click", toggleTripForm);
 
   document.addEventListener("click", handleDocumentClick);
   document.addEventListener("change", handleDocumentChange);
@@ -95,7 +92,7 @@ function handleDocumentClick(event) {
     return;
   }
 
-  const { action, tripId, itemId, place } = actionTarget.dataset;
+  const { action, tripId, itemId } = actionTarget.dataset;
 
   if (action === "select-trip") {
     selectTrip(tripId, true);
@@ -113,12 +110,12 @@ function handleDocumentClick(event) {
   }
 
   if (action === "open-naver-map") {
-    openNaverMap(place);
+    openNaverMap(tripId);
     return;
   }
 
-  if (action === "open-kakao-map") {
-    openKakaoMap(place);
+  if (action === "open-naver-directions") {
+    void openNaverDirections(tripId);
     return;
   }
 
@@ -156,6 +153,33 @@ function handleDocumentInput(event) {
   }
 
   updateTripLog(event.target.value);
+}
+
+function toggleTripForm() {
+  setTripFormOpen(!state.isTripFormOpen, true);
+}
+
+function setTripFormOpen(isOpen, shouldScroll) {
+  state.isTripFormOpen = Boolean(isOpen);
+  syncTripFormUi();
+
+  if (state.isTripFormOpen && shouldScroll) {
+    dom.tripFormCard.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
+function syncTripFormUi() {
+  if (!dom.tripFormCard || !dom.toggleTripFormButton) {
+    return;
+  }
+
+  const label = state.isTripFormOpen ? "등록 폼 닫기" : "새 일정 등록";
+
+  dom.tripFormCard.hidden = !state.isTripFormOpen;
+  dom.toggleTripFormButton.setAttribute("aria-expanded", String(state.isTripFormOpen));
+  dom.toggleTripFormButton.setAttribute("aria-label", label);
+  dom.toggleTripFormButton.setAttribute("title", label);
+  dom.toggleTripFormButton.innerHTML = `<span aria-hidden="true">${state.isTripFormOpen ? "×" : "+"}</span>`;
 }
 
 function setFormDefaults() {
@@ -314,14 +338,11 @@ function renderApp() {
   const selectedTrip = getSelectedTrip();
 
   renderSelectedTrip(selectedTrip);
-  renderPrepSummary(selectedTrip);
-  renderWeatherCard(selectedTrip);
-  renderConditionCard(selectedTrip);
-  renderTideCard(selectedTrip);
-  renderChecklist(selectedTrip);
+  renderBriefingCard(selectedTrip);
+  renderPreparationCard(selectedTrip);
   renderPlaceCard(selectedTrip);
-  renderMemoCard(selectedTrip);
   renderTripList();
+  syncTripFormUi();
 
   if (selectedTrip) {
     void syncSelectedTripLocation();
@@ -910,6 +931,7 @@ function addTrip(event) {
   saveSelectedTrip();
   event.target.reset();
   setFormDefaults();
+  setTripFormOpen(false, false);
   renderApp();
   dom.selectedTripCard.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -1190,8 +1212,7 @@ async function syncTripWeather(tripId, forceRefresh) {
   state.loadingWeatherTripIds.add(tripId);
 
   if (trip.id === state.selectedTripId) {
-    renderWeatherCard(trip);
-    renderConditionCard(trip);
+    renderBriefingCard(trip);
   }
 
   try {
@@ -1551,7 +1572,7 @@ async function syncTripLocation(tripId, forceRefresh) {
   }
 
   try {
-    const geocodedLocation = await geocodeLocationName(trip.locationName);
+    const geocodedLocation = await geocodeLocationName(getTripLocationQuery(trip));
 
     if (!geocodedLocation) {
       throw new Error("위치 결과를 찾지 못했습니다.");
@@ -1843,4 +1864,797 @@ function escapeHtmlTextarea(value) {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+}
+
+function renderSelectedTrip(trip) {
+  if (!trip) {
+    dom.selectedTripCard.innerHTML = createEmptyCardMarkup(
+      "선택된 출조가 없습니다",
+      "헤더의 + 버튼으로 일정을 등록하면 출조 정보와 메모가 여기에 표시됩니다."
+    );
+    return;
+  }
+
+  const dday = calculateDday(trip.date);
+  const isNearestTrip = getNearestTrip(state.trips)?.id === trip.id;
+
+  dom.selectedTripCard.innerHTML = `
+    <div class="trip-title-row">
+      <div class="trip-title-block">
+        <p class="section-kicker">${isNearestTrip ? "다음 출조 일정" : "선택한 출조"}</p>
+        <h2>${escapeHtml(trip.title)}</h2>
+        <p class="trip-subtitle">${escapeHtml(formatTripDateTime(trip.date, trip.time))}</p>
+      </div>
+      <div class="dday-badge ${dday.className}">${dday.label}</div>
+    </div>
+
+    <div class="chip-row">
+      <span class="chip">${escapeHtml(trip.fishingType)}</span>
+      <span class="chip">${escapeHtml(trip.targetFish)}</span>
+      <span class="chip">${escapeHtml(trip.locationName)}</span>
+      ${isNearestTrip ? '<span class="badge badge-success">가장 가까운 일정</span>' : ""}
+    </div>
+
+    <div class="detail-grid detail-grid-tight" style="margin-top: 18px;">
+      <div class="detail-item">
+        <span>장소</span>
+        <strong>${escapeHtml(trip.locationName)}</strong>
+      </div>
+      <div class="detail-item">
+        <span>낚시유형</span>
+        <strong>${escapeHtml(trip.fishingType)}</strong>
+      </div>
+      <div class="detail-item">
+        <span>대상어</span>
+        <strong>${escapeHtml(trip.targetFish)}</strong>
+      </div>
+      <div class="detail-item">
+        <span>집결 정보</span>
+        <strong>${escapeHtml(formatMeetupInfo(trip.meetupPlace, trip.meetupTime))}</strong>
+      </div>
+      <div class="detail-item">
+        <span>비용</span>
+        <strong>${escapeHtml(formatCurrency(trip.cost))}</strong>
+      </div>
+      <div class="detail-item">
+        <span>출조 시간</span>
+        <strong>${escapeHtml(trip.time || "-")}</strong>
+      </div>
+    </div>
+
+    ${trip.memo ? `
+      <div class="trip-note">
+        <span class="meta-label">사전 메모</span>
+        <p>${escapeHtml(trip.memo)}</p>
+      </div>
+    ` : ""}
+
+    <div class="trip-note trip-log-panel">
+      <div class="section-title-row compact-row">
+        <div>
+          <span class="meta-label">출조 메모</span>
+          <h3>당일 기록</h3>
+        </div>
+        <span class="badge badge-muted">자동 저장</span>
+      </div>
+      <textarea
+        id="trip-log-textarea"
+        class="memo-textarea embedded"
+        placeholder="입질 시간, 채비, 사용한 웜 색상, 조과 등을 기록해보세요."
+      >${escapeHtmlTextarea(trip.tripLog)}</textarea>
+    </div>
+  `;
+}
+
+function renderBriefingCard(trip) {
+  if (!trip) {
+    dom.briefingCard.innerHTML = createEmptyCardMarkup(
+      "출조 브리핑",
+      "선택된 일정의 날씨, 낚시 컨디션, 물때를 한곳에서 보여드립니다."
+    );
+    return;
+  }
+
+  const weather = getWeatherData(trip);
+  const tide = getTideData(trip);
+  const condition = calculateFishingCondition(weather);
+  const status = getBriefingStatus(trip, weather);
+  const minMaxText = hasTemperatureRange(weather)
+    ? `${weather.minTemperature}°C / ${weather.maxTemperature}°C`
+    : "예보 범위 확인 중";
+  const sunriseSunsetText = weather.sunrise && weather.sunset
+    ? `${weather.sunrise} / ${weather.sunset}`
+    : "천문 정보 확인 중";
+  const humidityText = Number.isFinite(weather.humidity) ? `${weather.humidity}%` : "확인 중";
+  const windText = Number.isFinite(weather.windSpeed)
+    ? `${weather.windSpeed}m/s · ${escapeHtml(weather.windDirection || "변동")}`
+    : "확인 중";
+
+  dom.briefingCard.innerHTML = `
+    <div class="section-title-row">
+      <div>
+        <p class="section-kicker">출조 브리핑</p>
+        <h2>${escapeHtml(trip.locationName)} 한눈에 보기</h2>
+      </div>
+      <span class="badge ${status.badgeClass}">${status.badgeText}</span>
+    </div>
+
+    <div class="briefing-section">
+      <div class="panel-title-row">
+        <h3>날씨</h3>
+        <span class="briefing-meta">${escapeHtml(weather.sourceLabel)}</span>
+      </div>
+      <div class="weather-grid">
+        <div class="weather-item">
+          <span>기온</span>
+          <strong>${weather.temperature}°C</strong>
+        </div>
+        <div class="weather-item">
+          <span>최저 / 최고</span>
+          <strong>${minMaxText}</strong>
+        </div>
+        <div class="weather-item">
+          <span>날씨 상태</span>
+          <strong>${escapeHtml(weather.condition)}</strong>
+        </div>
+        <div class="weather-item">
+          <span>강수확률</span>
+          <strong>${weather.precipitation}%</strong>
+        </div>
+        <div class="weather-item">
+          <span>풍속 / 풍향</span>
+          <strong>${windText}</strong>
+        </div>
+        <div class="weather-item">
+          <span>습도</span>
+          <strong>${humidityText}</strong>
+        </div>
+        <div class="weather-item">
+          <span>일출 / 일몰</span>
+          <strong>${sunriseSunsetText}</strong>
+        </div>
+      </div>
+      <p class="helper-text">${escapeHtml(status.description)}</p>
+      ${weather.providerNotes.length ? `
+        <p class="helper-text">${escapeHtml(weather.providerNotes.join(" "))}</p>
+      ` : ""}
+    </div>
+
+    <div class="briefing-section">
+      <div class="panel-title-row">
+        <h3>낚시 컨디션</h3>
+        <span class="badge ${condition.badgeClass}">${condition.statusText}</span>
+      </div>
+      <div class="condition-layout">
+        <div class="condition-score">
+          <strong>${condition.score}</strong>
+          <span>점수</span>
+        </div>
+        <div class="condition-copy">
+          <h2>${condition.headline}</h2>
+          <p>${condition.message}</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="briefing-section">
+      <div class="panel-title-row">
+        <h3>물때</h3>
+        <span class="briefing-meta">더미 데이터</span>
+      </div>
+      <div class="tide-grid">
+        <div class="tide-item">
+          <span>만조 시간</span>
+          <strong>${escapeHtml(tide.highTide)}</strong>
+        </div>
+        <div class="tide-item">
+          <span>간조 시간</span>
+          <strong>${escapeHtml(tide.lowTide)}</strong>
+        </div>
+        <div class="tide-item">
+          <span>조차</span>
+          <strong>${escapeHtml(tide.tidalRange)}</strong>
+        </div>
+        <div class="tide-item">
+          <span>추천 시간대</span>
+          <strong>${escapeHtml(tide.recommendedWindow)}</strong>
+        </div>
+      </div>
+    </div>
+
+    <div class="card-action-row">
+      <button
+        type="button"
+        class="secondary-button"
+        data-action="refresh-weather"
+        data-trip-id="${escapeHtmlAttribute(trip.id)}"
+      >
+        날씨 다시 확인
+      </button>
+    </div>
+  `;
+}
+
+function renderPreparationCard(trip) {
+  if (!trip) {
+    dom.prepCard.innerHTML = createEmptyCardMarkup(
+      "준비 상태",
+      "선택된 일정의 준비 진행률과 체크리스트를 한 카드에서 관리합니다."
+    );
+    return;
+  }
+
+  const completedCount = trip.checklist.filter((item) => item.checked).length;
+  const totalCount = trip.checklist.length;
+  const progress = totalCount ? Math.round((completedCount / totalCount) * 100) : 0;
+
+  dom.prepCard.innerHTML = `
+    <div class="section-title-row">
+      <div>
+        <p class="section-kicker">준비 상태</p>
+        <h2>${completedCount} / ${totalCount} 완료</h2>
+      </div>
+      <span class="badge">${progress}%</span>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card highlight">
+        <span>준비 완료율</span>
+        <strong class="stat-number">${progress}%</strong>
+      </div>
+      <div class="stat-card">
+        <span>남은 준비물</span>
+        <strong class="stat-number">${Math.max(totalCount - completedCount, 0)}개</strong>
+      </div>
+    </div>
+
+    <div class="progress-track" aria-hidden="true">
+      <div class="progress-bar" style="width: ${progress}%;"></div>
+    </div>
+    <span class="progress-caption" style="margin-top: 10px;">체크리스트 기준으로 준비 진행률을 계산합니다.</span>
+
+    <div class="prep-divider"></div>
+
+    <div class="section-title-row compact-row">
+      <div>
+        <p class="section-kicker">준비물 체크리스트</p>
+        <h3>${escapeHtml(trip.fishingType)} 기본 준비물</h3>
+      </div>
+    </div>
+
+    <form id="checklist-add-form" class="inline-form">
+      <label class="visually-hidden" for="checklist-item-input">준비물 추가</label>
+      <input
+        id="checklist-item-input"
+        name="checklistItem"
+        type="text"
+        maxlength="40"
+        placeholder="직접 준비물을 추가해보세요"
+        required
+      >
+      <button type="submit" class="secondary-button">준비물 추가</button>
+    </form>
+
+    ${trip.checklist.length ? `
+      <ul class="checklist-list">
+        ${trip.checklist.map((item) => `
+          <li class="checklist-item ${item.checked ? "is-checked" : ""}">
+            <label>
+              <input
+                class="checklist-toggle"
+                type="checkbox"
+                data-trip-id="${escapeHtmlAttribute(trip.id)}"
+                data-item-id="${escapeHtmlAttribute(item.id)}"
+                ${item.checked ? "checked" : ""}
+              >
+              <span class="checklist-text">${escapeHtml(item.text)}</span>
+            </label>
+            <button
+              type="button"
+              class="danger-button"
+              data-action="delete-checklist-item"
+              data-trip-id="${escapeHtmlAttribute(trip.id)}"
+              data-item-id="${escapeHtmlAttribute(item.id)}"
+            >
+              삭제
+            </button>
+          </li>
+        `).join("")}
+      </ul>
+    ` : `
+      <p class="helper-text" style="margin-top: 16px;">준비물이 없습니다. 필요한 항목을 직접 추가해보세요.</p>
+    `}
+  `;
+}
+
+function renderPlaceCard(trip) {
+  if (!trip) {
+    dom.placeCard.innerHTML = createEmptyCardMarkup(
+      "장소",
+      "선택된 일정의 장소를 네이버 지도로 확인하고 길안내로 바로 이동할 수 있습니다."
+    );
+    return;
+  }
+
+  const placePreview = getPlaceCardState(trip);
+  const addressText = trip.locationMeta.roadAddress || trip.locationMeta.jibunAddress || getTripLocationQuery(trip);
+
+  dom.placeCard.innerHTML = `
+    <div class="section-title-row">
+      <div>
+        <p class="section-kicker">장소</p>
+        <h2>${escapeHtml(trip.locationName)}</h2>
+      </div>
+      <span class="badge">${escapeHtml(trip.fishingType)}</span>
+    </div>
+
+    <div class="status-row">
+      <span class="status-pill ${placePreview.statusClass}">${escapeHtml(placePreview.statusText)}</span>
+      <span class="status-pill is-success">네이버 지도 연동</span>
+    </div>
+
+    <div class="map-preview-box">
+      <div class="map-preview-media">
+        ${placePreview.imageSrc ? `
+          <img
+            src="${escapeHtmlAttribute(placePreview.imageSrc)}"
+            alt="${escapeHtmlAttribute(`${trip.locationName} 지도 미리보기`)}"
+          >
+          <span class="map-preview-pin" aria-hidden="true"></span>
+        ` : `
+          <div class="map-preview-placeholder">
+            <strong>${escapeHtml(trip.locationName)}</strong>
+            <span>${escapeHtml(placePreview.placeholderText)}</span>
+            <span class="map-preview-pin" aria-hidden="true"></span>
+          </div>
+        `}
+      </div>
+      <div class="map-preview-copy">
+        <h3>${escapeHtml(placePreview.title)}</h3>
+        <p>${escapeHtml(placePreview.description)}</p>
+      </div>
+    </div>
+
+    <div class="location-meta-grid location-meta-grid-full" style="margin-top: 14px;">
+      <div class="detail-item">
+        <span>장소명</span>
+        <strong>${escapeHtml(trip.locationName)}</strong>
+      </div>
+      <div class="detail-item">
+        <span>표시 주소</span>
+        <strong>${escapeHtml(addressText || "미입력")}</strong>
+      </div>
+      <div class="detail-item">
+        <span>집결지</span>
+        <strong>${escapeHtml(trip.meetupPlace || trip.locationName)}</strong>
+      </div>
+      <div class="detail-item">
+        <span>좌표</span>
+        <strong>${escapeHtml(formatCoordinates(trip.locationMeta))}</strong>
+      </div>
+    </div>
+
+    <div class="location-actions compact-actions">
+      <button
+        type="button"
+        class="secondary-button"
+        data-action="open-naver-map"
+        data-trip-id="${escapeHtmlAttribute(trip.id)}"
+      >
+        네이버 지도 보기
+      </button>
+      <button
+        type="button"
+        class="primary-button"
+        data-action="open-naver-directions"
+        data-trip-id="${escapeHtmlAttribute(trip.id)}"
+      >
+        네이버 길안내
+      </button>
+    </div>
+
+    <p class="helper-text">장소명 대신 실제 주소를 입력해도 네이버 지도에 같은 방식으로 표시됩니다.</p>
+  `;
+}
+
+function renderTripList() {
+  const sortedTrips = getSortedTrips(state.trips);
+
+  dom.tripListCard.innerHTML = `
+    <div class="section-title-row list-title">
+      <div>
+        <p class="section-kicker">전체 일정</p>
+        <h2>${sortedTrips.length}개의 출조 일정</h2>
+        <p>가까운 날짜 순으로 정렬됩니다.</p>
+      </div>
+    </div>
+
+    ${sortedTrips.length ? `
+      <div class="list-stack">
+        ${sortedTrips.map((trip) => {
+          const dday = calculateDday(trip.date);
+          const isSelected = trip.id === state.selectedTripId;
+
+          return `
+            <article class="trip-list-item ${isSelected ? "selected" : ""}">
+              <button
+                type="button"
+                class="trip-select-button"
+                data-action="select-trip"
+                data-trip-id="${escapeHtmlAttribute(trip.id)}"
+              >
+                <div class="trip-card-top">
+                  <div>
+                    <span class="trip-card-title">${escapeHtml(trip.title)}</span>
+                    <div class="trip-card-meta">
+                      <span>${escapeHtml(formatTripDateTime(trip.date, trip.time))}</span>
+                      <strong>${escapeHtml(trip.locationName)}</strong>
+                    </div>
+                  </div>
+                  <span class="badge ${dday.badgeClass}">${dday.label}</span>
+                </div>
+                <div class="trip-card-chips">
+                  <span class="chip">${escapeHtml(trip.targetFish)}</span>
+                  <span class="chip">${escapeHtml(trip.fishingType)}</span>
+                </div>
+              </button>
+              <div class="trip-card-actions">
+                <button
+                  type="button"
+                  class="danger-button large-button"
+                  data-action="delete-trip"
+                  data-trip-id="${escapeHtmlAttribute(trip.id)}"
+                >
+                  일정 삭제
+                </button>
+              </div>
+            </article>
+          `;
+        }).join("")}
+      </div>
+    ` : `
+      <div class="empty-card">
+        <h2>등록된 일정이 없습니다</h2>
+        <p>헤더의 + 버튼으로 첫 출조 일정을 추가해보세요.</p>
+      </div>
+    `}
+  `;
+}
+
+function getBriefingStatus(trip, weather) {
+  if (state.loadingWeatherTripIds.has(trip.id) && !weather.hasLiveData) {
+    return {
+      badgeClass: "badge",
+      badgeText: "조회 중",
+      description: "기상청 예보를 불러오는 중입니다."
+    };
+  }
+
+  if (state.loadingWeatherTripIds.has(trip.id)) {
+    return {
+      badgeClass: "badge",
+      badgeText: weather.sourceLabel,
+      description: "이전 예보를 보여주면서 최신 정보로 갱신하고 있습니다."
+    };
+  }
+
+  if (state.weatherErrors[trip.id]) {
+    return {
+      badgeClass: weather.hasLiveData ? "badge-warning" : "badge-muted",
+      badgeText: weather.hasLiveData ? weather.sourceLabel : "임시 데이터",
+      description: state.weatherErrors[trip.id]
+    };
+  }
+
+  return {
+    badgeClass: weather.hasLiveData ? "badge-success" : "badge-muted",
+    badgeText: weather.sourceLabel,
+    description: weather.description
+  };
+}
+
+function getPlaceCardState(trip) {
+  if (state.locationErrors[trip.id]) {
+    return {
+      statusClass: "is-warning",
+      statusText: "위치 확인 필요",
+      title: "주소를 다시 확인해주세요",
+      description: state.locationErrors[trip.id],
+      placeholderText: "입력한 장소명 또는 주소를 기준으로 지도를 찾는 중 문제가 있었습니다.",
+      imageSrc: ""
+    };
+  }
+
+  if (state.resolvingTripIds.has(trip.id)) {
+    return {
+      statusClass: "is-info",
+      statusText: "좌표 확인 중",
+      title: "네이버 지도 좌표를 조회하고 있습니다",
+      description: "입력한 장소명 또는 주소를 기준으로 지도 미리보기를 준비하는 중입니다.",
+      placeholderText: "좌표를 불러오는 동안 잠시만 기다려주세요.",
+      imageSrc: ""
+    };
+  }
+
+  if (hasCoordinates(trip.locationMeta) && hasNaverProxy()) {
+    return {
+      statusClass: "is-success",
+      statusText: "지도 표시 준비 완료",
+      title: "네이버 지도 미리보기",
+      description: trip.locationMeta.roadAddress || "저장된 좌표를 기준으로 네이버 정적 지도를 표시합니다.",
+      placeholderText: "",
+      imageSrc: buildNaverStaticMapUrl(trip)
+    };
+  }
+
+  if (hasCoordinates(trip.locationMeta)) {
+    return {
+      statusClass: "is-muted",
+      statusText: "좌표 저장됨",
+      title: "좌표는 저장되어 있습니다",
+      description: "프록시 연결이 준비되면 정적 지도 미리보기가 함께 표시됩니다.",
+      placeholderText: "좌표는 확보되었지만 정적 지도를 아직 불러오지 못했습니다.",
+      imageSrc: ""
+    };
+  }
+
+  return {
+    statusClass: "is-info",
+    statusText: "위치 확인 예정",
+    title: "입력한 장소를 네이버 지도에 표시합니다",
+    description: "장소명이나 실제 주소를 입력해두면 자동으로 좌표를 찾아 지도를 준비합니다.",
+    placeholderText: "장소 또는 주소를 기준으로 네이버 지도 위치를 맞춥니다.",
+    imageSrc: ""
+  };
+}
+
+function getTripLocationQuery(trip) {
+  const locationName = String(trip?.locationName || "").trim();
+  const meetupPlace = String(trip?.meetupPlace || "").trim();
+
+  return locationName || meetupPlace;
+}
+
+function getTripMapLabel(trip) {
+  const roadAddress = String(trip?.locationMeta?.roadAddress || "").trim();
+  const jibunAddress = String(trip?.locationMeta?.jibunAddress || "").trim();
+
+  return roadAddress || jibunAddress || getTripLocationQuery(trip);
+}
+
+async function openNaverDirections(tripId) {
+  const trip = state.trips.find((item) => item.id === tripId);
+
+  if (!trip) {
+    return;
+  }
+
+  if (!hasCoordinates(trip.locationMeta) && hasNaverProxy()) {
+    await syncTripLocation(tripId, true);
+  }
+
+  const latestTrip = state.trips.find((item) => item.id === tripId) || trip;
+  const fallbackUrl = buildNaverSearchUrl(getTripMapLabel(latestTrip));
+
+  if (!hasCoordinates(latestTrip.locationMeta) || !isMobileDevice()) {
+    window.open(fallbackUrl, "_blank", "noopener");
+    return;
+  }
+
+  openExternalWithFallback(buildNaverDirectionsAppUrl(latestTrip), fallbackUrl);
+}
+
+function openNaverMap(tripId) {
+  const trip = state.trips.find((item) => item.id === tripId);
+
+  if (!trip) {
+    return;
+  }
+
+  window.open(buildNaverSearchUrl(getTripMapLabel(trip)), "_blank", "noopener");
+}
+
+function buildNaverSearchUrl(query) {
+  return `https://map.naver.com/p/search/${encodeURIComponent(query)}`;
+}
+
+function buildNaverDirectionsAppUrl(trip) {
+  const params = new URLSearchParams({
+    dlat: String(trip.locationMeta.lat),
+    dlng: String(trip.locationMeta.lng),
+    dname: getTripMapLabel(trip),
+    appname: "출조노트"
+  });
+
+  return `nmap://route/public?${params.toString()}`;
+}
+
+function openExternalWithFallback(appUrl, fallbackUrl) {
+  const fallbackTimer = window.setTimeout(() => {
+    window.open(fallbackUrl, "_blank", "noopener");
+  }, 900);
+
+  const clearFallback = () => window.clearTimeout(fallbackTimer);
+  window.addEventListener("pagehide", clearFallback, { once: true });
+  window.addEventListener("blur", clearFallback, { once: true });
+  window.location.href = appUrl;
+}
+
+function isMobileDevice() {
+  return /Android|iPhone|iPad|iPod/i.test(window.navigator.userAgent);
+}
+
+function normalizeWeatherApiData(weather) {
+  const windSpeed = toNullableNumber(weather.windSpeed);
+  const minTemperature = toNullableNumber(weather.minTemperature);
+  const maxTemperature = toNullableNumber(weather.maxTemperature);
+  const temperature = toNullableNumber(weather.temperature);
+  const precipitation = toNullableNumber(weather.precipitationProbability ?? weather.precipitation);
+  const humidity = toNullableNumber(weather.humidity);
+  const fallbackTemperature = temperature ?? averageTemperature(minTemperature, maxTemperature) ?? 0;
+
+  return {
+    temperature: Number(fallbackTemperature.toFixed(1)),
+    minTemperature,
+    maxTemperature,
+    condition: String(weather.condition || "예보 확인 중"),
+    precipitation: Number.isFinite(precipitation) ? precipitation : 0,
+    windSpeed,
+    windDirection: String(weather.windDirection || "변동"),
+    humidity,
+    sunrise: normalizeClockText(weather.sunrise),
+    sunset: normalizeClockText(weather.sunset),
+    source: String(weather.source || "api"),
+    sourceLabel: String(weather.sourceLabel || "공공 예보"),
+    hasLiveData: true,
+    usesEstimatedWind: Boolean(weather.usesEstimatedWind),
+    description: String(
+      weather.description
+      || weather.summary
+      || "기상청 예보와 일출·일몰 정보를 기준으로 구성한 브리핑입니다."
+    ),
+    providerNotes: Array.isArray(weather.notes)
+      ? weather.notes.map((item) => String(item)).filter(Boolean)
+      : []
+  };
+}
+
+function createFallbackWeatherData(trip) {
+  const seed = createSeed(`${trip.id}-${trip.date}-${trip.locationName}`);
+  const conditions = ["맑음", "구름 많음", "흐림", "약한 비 가능성"];
+  const directions = ["북", "북동", "동", "남동", "남", "남서", "서", "북서"];
+  const temperature = 18 + (seed % 12);
+
+  return {
+    temperature,
+    minTemperature: temperature - 2,
+    maxTemperature: temperature + 3,
+    condition: conditions[seed % conditions.length],
+    precipitation: [10, 20, 30, 40, 50, 60, 70][seed % 7],
+    windSpeed: Number((2 + ((seed % 65) / 10)).toFixed(1)),
+    windDirection: directions[seed % directions.length],
+    humidity: 55 + (seed % 35),
+    sunrise: "",
+    sunset: "",
+    source: "fallback",
+    sourceLabel: "임시 데이터",
+    hasLiveData: false,
+    usesEstimatedWind: false,
+    description: "실제 예보를 아직 불러오지 못해 임시 데이터로 표시 중입니다. API 응답이 오면 자동으로 실제 정보로 바뀝니다.",
+    providerNotes: []
+  };
+}
+
+function calculateFishingCondition(weather) {
+  const effectiveWindSpeed = Number.isFinite(weather.windSpeed) ? weather.windSpeed : 4.5;
+  const effectivePrecipitation = Number.isFinite(weather.precipitation) ? weather.precipitation : 30;
+  const windPenalty = Math.max(0, effectiveWindSpeed - 2) * 8;
+  const rainPenalty = effectivePrecipitation * 0.35;
+  const score = clamp(Math.round(95 - windPenalty - rainPenalty), 0, 100);
+
+  let headline = "오전 출조에 무난한 조건입니다.";
+  let message = "기본 준비물 위주로 챙기면 무리 없는 흐름입니다.";
+  let statusText = "양호";
+  let badgeClass = "badge-success";
+
+  if (effectivePrecipitation >= 60) {
+    headline = "비 예보가 있어 대비가 필요합니다.";
+    message = "우비와 방수팩을 챙기고, 장비 보관도 한 번 더 확인해보세요.";
+    statusText = "우천 대비";
+    badgeClass = "badge-warning";
+  } else if (effectiveWindSpeed >= 7) {
+    headline = "바람이 강할 수 있어 주의가 필요합니다.";
+    message = "출항 여부와 현장 상황을 한 번 더 확인하고 이동하세요.";
+    statusText = "강풍 주의";
+    badgeClass = "badge-danger";
+  } else if (effectiveWindSpeed > 4) {
+    headline = "바람을 감안해 준비하면 괜찮은 편입니다.";
+    message = "채비와 복장을 바람에 맞춰 조금 더 여유 있게 준비해두세요.";
+    statusText = "보통";
+    badgeClass = "badge";
+  }
+
+  if (weather.usesEstimatedWind) {
+    message = `${message} 중기예보 구간은 풍속이 추정치일 수 있습니다.`;
+  } else if (!weather.hasLiveData) {
+    message = `${message} 현재는 임시 데이터를 바탕으로 보여주고 있습니다.`;
+  }
+
+  return {
+    score,
+    headline,
+    message,
+    statusText,
+    badgeClass
+  };
+}
+
+function getFriendlyLocationError(error) {
+  const message = String(error?.message || "");
+
+  if (message.includes("Failed to fetch")) {
+    return "위치 정보를 불러오지 못했습니다. 네이버 지도 프록시 연결 상태를 확인해주세요.";
+  }
+
+  if (message.includes("위치 결과")) {
+    return "입력한 장소명 또는 주소로 좌표를 찾지 못했습니다. 조금 더 자세한 주소로 입력해보세요.";
+  }
+
+  return "위치 정보를 불러오지 못했습니다. 입력한 장소명 또는 주소를 다시 확인해주세요.";
+}
+
+function getFriendlyWeatherError(error) {
+  const message = String(error?.message || "");
+
+  if (message.includes("Failed to fetch")) {
+    return "날씨 예보 서버에 연결하지 못했습니다. 잠시 후 다시 시도해주세요.";
+  }
+
+  if (message.includes("환경변수") || message.includes("예보 범위") || message.includes("지역 매핑")) {
+    return message;
+  }
+
+  return message || "날씨 정보를 가져오지 못했습니다. 잠시 후 다시 시도해주세요.";
+}
+
+function formatMeetupInfo(place, time) {
+  if (!place && !time) {
+    return "-";
+  }
+
+  if (!place) {
+    return time;
+  }
+
+  if (!time) {
+    return place;
+  }
+
+  return `${place} · ${time}`;
+}
+
+function formatCurrency(value) {
+  if (!value) {
+    return "미정";
+  }
+
+  return `${Number(value).toLocaleString("ko-KR")}원`;
+}
+
+function formatCoordinates(locationMeta) {
+  if (!hasCoordinates(locationMeta)) {
+    return "미확인";
+  }
+
+  return `${locationMeta.lat.toFixed(6)}, ${locationMeta.lng.toFixed(6)}`;
+}
+
+function createEmptyCardMarkup(title, description) {
+  return `
+    <div class="empty-card">
+      <p class="section-kicker">준비 중</p>
+      <h2>${escapeHtml(title)}</h2>
+      <p>${escapeHtml(description)}</p>
+    </div>
+  `;
 }

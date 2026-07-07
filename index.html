@@ -11,36 +11,47 @@
 <body>
   <div class="app-shell">
     <header class="hero">
-      <p class="hero-kicker">Fishing Schedule Notebook</p>
-      <h1>출조노트</h1>
+      <div class="hero-top">
+        <div>
+          <p class="hero-kicker">Fishing Schedule Notebook</p>
+          <h1>출조노트</h1>
+        </div>
+        <button
+          id="toggle-trip-form-btn"
+          class="icon-button"
+          type="button"
+          aria-expanded="false"
+          aria-controls="trip-form-card"
+          aria-label="새 일정 등록"
+          title="새 일정 등록"
+        >
+          <span aria-hidden="true">+</span>
+        </button>
+      </div>
       <p class="hero-description">
-        다음 출조 일정, 준비물, 메모, 장소 정보를 한 화면에서 관리하는 모바일 웹입니다.
+        다음 출조 일정, 준비물, 날씨, 장소를 한 화면에서 빠르게 확인하는 모바일 출조 일정 노트입니다.
       </p>
     </header>
 
     <main class="app-main">
       <section id="selected-trip-card" class="card feature-card" aria-live="polite"></section>
-      <section id="prep-summary-card" class="card" aria-live="polite"></section>
-      <section id="weather-card" class="card" aria-live="polite"></section>
-      <section id="condition-card" class="card" aria-live="polite"></section>
-      <section id="tide-card" class="card" aria-live="polite"></section>
-      <section id="checklist-card" class="card" aria-live="polite"></section>
+      <section id="briefing-card" class="card" aria-live="polite"></section>
+      <section id="prep-card" class="card" aria-live="polite"></section>
       <section id="place-card" class="card" aria-live="polite"></section>
-      <section id="memo-card" class="card" aria-live="polite"></section>
       <section id="trip-list-card" class="card" aria-live="polite"></section>
 
-      <section id="trip-form-card" class="card">
+      <section id="trip-form-card" class="card" hidden>
         <div class="section-title-row">
           <div>
             <p class="section-kicker">일정 등록</p>
-            <h2>새 일정 추가</h2>
+            <h2>새 출조 일정</h2>
           </div>
         </div>
 
         <form id="trip-form" class="trip-form">
           <label class="field">
             <span>출조명</span>
-            <input type="text" name="title" placeholder="예: 격포 참돔 타이라바" required>
+            <input type="text" name="title" placeholder="예: 태안 선상 광어" required>
           </label>
 
           <div class="field-grid two-columns">
@@ -55,8 +66,13 @@
           </div>
 
           <label class="field">
-            <span>장소명</span>
-            <input type="text" name="locationName" placeholder="예: 구매항" required>
+            <span>장소명 또는 주소</span>
+            <input
+              type="text"
+              name="locationName"
+              placeholder="예: 구매항 또는 충남 태안군 안면읍 구매길 00"
+              required
+            >
           </label>
 
           <div class="field-grid two-columns">
@@ -78,7 +94,7 @@
 
           <label class="field">
             <span>출항지 또는 집결지</span>
-            <input type="text" name="meetupPlace" placeholder="예: 구매항">
+            <input type="text" name="meetupPlace" placeholder="예: 구매항 집결지">
           </label>
 
           <div class="field-grid two-columns">
@@ -105,12 +121,6 @@
         </form>
       </section>
     </main>
-
-    <div class="floating-bar">
-      <button id="scroll-to-form-btn" class="primary-button large-button" type="button">
-        새 일정 등록
-      </button>
-    </div>
   </div>
 
   <script>
