@@ -45,8 +45,8 @@ function sendJson(response, statusCode, payload, extraHeaders) {
 
 function readServiceKey() {
   return String(
-    process.env.PUBLIC_DATA_SERVICE_KEY
-    || process.env.WEATHER_API_SERVICE_KEY
+    process.env.WEATHER_API_SERVICE_KEY
+    || process.env.PUBLIC_DATA_SERVICE_KEY
     || process.env.DATA_GO_KR_SERVICE_KEY
     || ""
   ).trim();
